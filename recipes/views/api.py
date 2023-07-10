@@ -1,22 +1,29 @@
-
 from django.shortcuts import get_object_or_404
+from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.permissions import (IsAuthenticated,
+                                        IsAuthenticatedOrReadOnly)
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+
 from tag.models import Tag
 
 from ..models import Recipe
+from ..permissions import IsOwner
 from ..serializers import RecipeSerializer, TagSerializer
 
 
 class RecipeAPIv2Pagination(PageNumberPagination):
     page_size = 10
 
+
 class RecipeAPIv2ViewSet(ModelViewSet):
     queryset = Recipe.objects.get_published()
     serializer_class = RecipeSerializer
     pagination_class = RecipeAPIv2Pagination
+    permission_classes = [IsAuthenticatedOrReadOnly,]
+    http_method_names = ['get', 'options', 'head', 'patch', 'post', 'delete']
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -28,10 +35,37 @@ class RecipeAPIv2ViewSet(ModelViewSet):
 
         return qs
 
+    def get_object(self):
+        pk = self.kwargs.get('pk', '')
+        obj = get_object_or_404(
+            self.get_queryset(),
+            pk=pk,
+        )
+
+        self.check_object_permissions(self.request, obj)
+
+        return obj
+
+    def get_permissions(self):
+        if self.request.method in ['PATCH', 'DELETE']:
+            return [IsOwner(),]
+        return super().get_permissions()
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(author=request.user)
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
     def partial_update(self, request, *args, **kwargs):
         pk = kwargs.get('pk')
 
-        recipe = self.get_queryset().filter(pk=pk).first()
+        recipe = self.get_object()
         serializer = RecipeSerializer(
             instance=recipe,
             data=request.data,
@@ -45,7 +79,8 @@ class RecipeAPIv2ViewSet(ModelViewSet):
             serializer.data,
         )
 
-########################functions_base_view#####################################
+######################## functions_base_view#####################################
+
 
 @api_view()
 def tag_api_detail(request, pk):
@@ -57,5 +92,5 @@ def tag_api_detail(request, pk):
         instance=tag,
         many=False,
         context={'request': request},
-        )
+    )
     return Response(serializer.data)
